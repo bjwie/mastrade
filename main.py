@@ -1,28 +1,33 @@
 import time
+from numpy.testing import verbose
+from pandas.core.frame import DataFrame
 import yfinance as yf
 from sklearn.preprocessing import MinMaxScaler
 import pandas as pd
 import numpy as np
 from stable_baselines3 import PPO
+from stable_baselines3 import A2C
 import gym
 from gym import spaces
 from gym.utils import seeding
 from gym.envs.classic_control import rendering
 import talib as ta
+from stable_baselines3.a2c.policies import MlpPolicy
 
 MONKEY_HIGH = 1
 NUMBER_OF_ROPES = 4
-DoGym = False
+DoGym = True
 
 
 class monkeyEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, monkey_high, n):
+    def __init__(self, monkey_high, n, stock):
 
         self.monkey_high = monkey_high
         self.viewer = None
-        self.n = n+1
+        self.n = n
+        self.stock = stock
 
         # actions
         self.action_space = spaces.Discrete(self.n)
@@ -47,13 +52,11 @@ class monkeyEnv(gym.Env):
         self.time = 0
 
         self.ropes = pd.DataFrame(
-            np.random.randint(
-                1, 100, size=(100, NUMBER_OF_ROPES)
-            ),
-            columns=list(range(1, NUMBER_OF_ROPES+1))
+            self.stock,
+            columns=list(range(1, NUMBER_OF_ROPES))
         )
         # let assume that is an stable coin like usdt that have 50$ price
-        self.ropes.insert(loc=0, column=0, value=[50]*100)
+        self.ropes.insert(loc=0, column=0, value=[50]*98)
 
         # for idx, rope in enumerate(self.ropes):
         #     self.ropes[idx] = ta.SMA(rope, 14)
@@ -74,7 +77,7 @@ class monkeyEnv(gym.Env):
         self.monkey_high = self.ropes.iat[self.time, self.monkey_pos]
 
         self.time += 1
-        done = True if self.time == 100 else False
+        done = True if self.time == 98 else False
         reward = 0.01*(self.monkey_high - self.monkey_last_high)
 
         info = {
@@ -128,41 +131,44 @@ class monkeyEnv(gym.Env):
 # --------------------------------------------------------------
 
 
-# symbols = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'XRP-USD']
-# df = pd.DataFrame([1]*100)
+symbols = ['BTC-USD', 'ETH-USD', 'BNB-USD', 'XRP-USD']
+df = pd.DataFrame([1]*98)
 
-# for i in range(len(symbols)):
-#     symbol = symbols[i]
-#     s = yf.download(tickers=symbol, period='22h',
-#                     interval='15m')['Close']
-#     print(s)
-#     df.insert(loc=i+1, column=i+1, value=s)
+for i in range(len(symbols)):
+    symbol = symbols[i]
+    s = yf.download(tickers=symbol, period='30h',
+                    interval='15m')
+    print(s['Close'])
+    close = s['Close'].values
+    df[i] = close[:98]
+    # df.insert(loc=i+1, column=i+1, value=s.Close)
 
-# scaler = MinMaxScaler()
+scaler = MinMaxScaler()
 
-# x = df.values  # returns a numpy array
-# x_scaled = scaler.fit_transform(x)
-# df = pd.DataFrame(x_scaled)
-
+x = df.values  # returns a numpy array
+x_scaled = scaler.fit_transform(x)
+df = pd.DataFrame(x_scaled)
 
 # for example we have 50$ in start
-env = monkeyEnv(monkey_high=MONKEY_HIGH, n=NUMBER_OF_ROPES)
+env = monkeyEnv(monkey_high=MONKEY_HIGH, n=NUMBER_OF_ROPES, stock=df)
 model = None
 if DoGym:
-    model = PPO("MlpPolicy", env, verbose=1)
-    model.learn(total_timesteps=100000)
+    model = A2C(MlpPolicy, env,verbose=1, device="cuda")
+    model.learn(total_timesteps=10000, log_interval=500)
     model.save("ppo_monkey")
 
-del model  # remove to demonstrate saving and loading
+#del model  # remove to demonstrate saving and loading
 
-model = PPO.load("ppo_monkey")
+model = A2C.load("ppo_monkey")
 
 obs = env.reset()
-while True:
+import itertools
+
+for _ in itertools.repeat(None, 1000):
     time.sleep(0.1)
     action, _states = model.predict(obs)
     obs, rewards, dones, info = env.step(action)
     env.render()
-    print(info['monkey_high'], info['monkey_pos'])
-    if info['time'] >= 100:
+    print(info['monkey_high'], info['monkey_pos'], rewards)
+    if info['time'] >= 98:
         env.reset()
